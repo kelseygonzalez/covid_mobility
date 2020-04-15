@@ -1,0 +1,176 @@
+---
+title: "How has human mobility changed under the COVID-19 Pandemic?"
+author: "Kelsey Gonzalez"
+date: "April 15, 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This visualization aims to understand population behavior during the COVID-19 pandemic. I use aggregated human mobility data (how far people move each day) from Cuebiq, an offline intelligence and measurement marketing company, which partners with 86 apps to collect first-party location data. Different U.S. states have handled the Covid-19 Pandemic in vastly different ways, with some states still refraining from issuing stay-at-home orders. This has led to very different mobility behaviors by state. However, this visualization shows that the stay-at-home order successfully reduced movement during the week of March 23rd, with Americans quickly reverting towards pre-COVID-19 movement patterns. 
+
+Data is available at https://www.cuebiq.com/visitation-insights-covid19/
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(gganimate)
+library(ggthemes)
+library(choroplethr)
+library(maps)
+library(htmltools)
+require(transformr)
+
+theme_set(theme_minimal())
+
+theme_map <- function(...) {
+  theme_minimal() +
+    theme(
+      axis.line = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(),
+      plot.background = element_rect(fill = "white", color = NA), 
+      panel.background = element_rect(fill = "white", color = NA), 
+      legend.background = element_rect(fill = "white", color = NA),
+      legend.title = element_blank(), 
+      panel.border = element_blank(),
+      legend.position = "none",
+      plot.caption = element_text(hjust = 1, face= "italic"),
+      plot.title.position = "plot",
+      plot.caption.position =  "plot"
+    )
+}
+
+```
+
+```{r data wrangling, include=FALSE}
+covid <- read_csv("covid2.csv") %>% 
+  filter(! state %in% c("District of Columbia", "Alaska", "Hawaii")) %>% 
+  dplyr::select(c(state, state_stub, week, week_date_mdy, mobility)) %>% 
+  pivot_wider(id_cols = c(state, state_stub), 
+              names_from = week_date_mdy, 
+              values_from = mobility)  %>% 
+  mutate( `2020-03-02` = (`2020-03-02`) / `2020-02-24`,
+          `2020-03-09` = (`2020-03-09`) / `2020-02-24`, 
+          `2020-03-16` = (`2020-03-16`) / `2020-02-24`, 
+          `2020-03-23` = (`2020-03-23`) / `2020-02-24`, 
+          `2020-03-30` = (`2020-03-30`) / `2020-02-24`, 
+          `2020-04-06` = (`2020-04-06`) / `2020-02-24`,
+          `2020-02-24` = 1) %>% 
+  pivot_longer(cols = -c(state, state_stub), names_to = "date", values_to = "mobility", names_prefix = "mobility_") %>% 
+  mutate(date = lubridate::ymd(date)) 
+
+```
+
+```{r plot, include=FALSE}
+interesting <- c(
+  "Alabama",  "South Carolina", "Georgia",
+  "New York",
+  "California", "Washington", "Arizona", "New Jersey"
+)
+
+covid <-
+  covid %>% mutate(
+    colors = ifelse(state %in% interesting, "interesting", "not"),
+    lab = ifelse(state %in% interesting, str_to_upper(state_stub), "")
+  )
+
+a <- ggplot(covid, aes(x = date,
+                       y = mobility,
+                       group = state_stub)) +
+  geom_line(aes(color = colors),
+            show.legend = FALSE,
+            alpha = 0.7) +
+  scale_color_manual(values = c('black', 'grey80')) +
+  geom_point(
+    data = covid %>% filter(colors != "interesting"),
+    shape = 21,
+    colour = 'grey80',
+    fill = 'grey80',
+    alpha = 0.7,
+    size = 2
+  ) +
+  geom_point(
+    data = covid %>% filter(colors == "interesting"),
+    aes(fill = mobility),
+    shape = 21,
+    colour = "black",
+    alpha = 0.7,
+    size = 4,
+    stroke = 2
+  ) +
+  scale_fill_gradient(low = "forestgreen", high = "white") +
+  geom_text(
+    aes(label = lab),
+    show.legend = FALSE,
+    hjust = -.5,
+    vjust = .3
+  ) +
+  xlab("") +
+  ylab("Mobility Rate") +
+  scale_x_date(date_breaks = "1 week",
+               date_labels = "%m-%d") +
+  scale_y_continuous(limits = c(.2, 1.1)) +
+  transition_reveal(along = date) +
+  ggtitle("How has human mobility changed under the COVID-19 pandemic?",
+          subtitle = "Week of: {frame_along}") +
+  view_follow(fixed_y = T)
+
+animate(a, height = 400, end_pause = 10)
+anim_save("output-gif/plot.gif")
+```
+
+```{r map, include=FALSE}
+# code influenced by https://ditheringdata.netlify.app/2018/01/01/gganimate/
+
+us <- map_data("state") %>% rename(state = region) %>% mutate(state = str_to_title(state))
+mobility <- covid %>% left_join(us)
+
+b <- ggplot(data = mobility,
+            aes(frame = date)) +
+  geom_polygon(aes(
+    x = long,
+    y = lat,
+    group = group,
+    fill = mobility
+  ),
+  color = "#8c8c8c") +
+  theme_map() +
+  scale_fill_gradient(low = "forestgreen",
+                      high = "white") +
+  coord_map("albers",
+            lat0 = 30,
+            lat1 = 40) +
+  labs(caption = "Mobility data from Cuebiq\nChart by @kelseyegonzalez") +
+  transition_states(
+    states = date,
+    transition_length = 1.5,
+    state_length = 1
+  )
+
+animate(b, height = 400, end_pause = 10)
+anim_save("output-gif/map.gif")
+```
+
+
+```{r combine gifs}
+# code to combine gifs from https://github.com/thomasp85/gganimate/wiki/Animation-Composition
+
+a_mgif <- magick::image_read("output-gif/plot.gif")
+b_mgif <- magick::image_read("output-gif/map.gif")
+
+new_gif <- magick::image_append(c(a_mgif[1], b_mgif[1]))
+for (i in 2:100) {
+  combined <- magick::image_append(c(a_mgif[i], b_mgif[i]))
+  new_gif <- c(new_gif, combined)
+}
+
+new_gif
+# anim_save("together.gif")
+```
+
